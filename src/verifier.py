@@ -112,8 +112,22 @@ def verify_leaf_set_consistency(
       - 它只能检查所给叶与摘要一致，**不能证明没有遗漏的叶**；
       - 它不是 ZK 证明，也不证明状态转换正确性。
     """
+    # R5-A-R2 / T16：聚合前先拒绝重复 key、重复路径标识。
+    # 路径标识是 SHA-256(key)，与 SMT 的键哈希一致；重复提交同一有效证明
+    # 会让同一授权被重复计入聚合，因此必须在这里截断。
+    seen_keys: set[bytes] = set()
+    seen_path_ids: set[bytes] = set()
     active_grants = []
     for proof in leaf_proofs:
+        if not isinstance(proof.key, bytes) or len(proof.key) == 0:
+            return False
+        if proof.key in seen_keys:
+            return False
+        path_id = hashlib.sha256(proof.key).digest()
+        if path_id in seen_path_ids:
+            return False
+        seen_keys.add(proof.key)
+        seen_path_ids.add(path_id)
         if not verify_path(proof.key, proof.value, proof.siblings, inner_root):
             return False
         if proof.value is None:
@@ -139,25 +153,54 @@ def verify_leaf_set_consistency(
         return False
 
 
+@dataclass(frozen=True)
+class TrustedCheckpoint:
+    """外部可信状态检查点：root 与 version 必须成对绑定。
+
+    信任前提：调用方必须保证 checkpoint 来自可信来源（如透明日志、签名公告）。
+    本原型不实现检查点签名、共识或透明日志，构造任意 checkpoint 不构成可信事实。
+    """
+
+    root: bytes
+    version: int
+
+
+def _valid_checkpoint(checkpoint) -> bool:
+    """校验检查点结构；bool 被显式拒绝，因为 bool 是 int 的子类。"""
+    return (
+        isinstance(checkpoint, TrustedCheckpoint)
+        and isinstance(checkpoint.root, bytes)
+        and len(checkpoint.root) == 32
+        and not isinstance(checkpoint.version, bool)
+        and isinstance(checkpoint.version, int)
+        and checkpoint.version >= 0
+    )
+
+
 def verify_transition(
     old_root: bytes,
     new_root: bytes,
     version_before: int,
     version_after: int,
-    trusted_old_root: bytes,
-    trusted_root: bytes,
+    trusted_old: TrustedCheckpoint,
+    trusted_new: TrustedCheckpoint,
 ) -> bool:
-    """检查旧根/新根/version 与可信快照一致。"""
-    if not isinstance(version_before, int) or not isinstance(version_after, int):
+    """检查旧根/新根/三个版本字段与可信检查点绑定，且版本递增 1。"""
+    if not _valid_checkpoint(trusted_old) or not _valid_checkpoint(trusted_new):
         return False
+    for value in (version_before, version_after):
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            return False
     if not isinstance(old_root, bytes) or len(old_root) != 32:
         return False
     if not isinstance(new_root, bytes) or len(new_root) != 32:
         return False
-    if old_root != trusted_old_root or new_root != trusted_root:
+    if old_root != trusted_old.root or new_root != trusted_new.root:
         return False
-    if version_before == 0 and version_after == 0:
-        return old_root == new_root
+    if version_before != trusted_old.version:
+        return False
+    if version_after != trusted_new.version:
+        return False
     return version_after == version_before + 1
 
 
@@ -177,17 +220,30 @@ class StateProof:
 
 
 def verify_state_proof(
-    proof: StateProof, trusted_root: bytes, trusted_old_root: bytes
+    proof: StateProof,
+    trusted_old_checkpoint: TrustedCheckpoint,
+    trusted_new_checkpoint: TrustedCheckpoint,
 ) -> bool:
-    """完整状态证明验证：外层承诺 + 内层承诺 + 键一致性 + 转换一致性。"""
-    if proof.global_root != trusted_root:
+    """完整状态证明验证：可信根/版本绑定 + 外层/内层承诺 + 键一致性。"""
+    if not _valid_checkpoint(trusted_old_checkpoint) or not _valid_checkpoint(
+        trusted_new_checkpoint
+    ):
         return False
-    if proof.new_global_root != trusted_root:
+    # R5-A-R2 / T17：三个版本字段和旧/新根都必须绑定外部可信检查点。
+    if proof.global_root != trusted_new_checkpoint.root:
         return False
-    # R5-A-R1 / T15：version 字段必须存在且与转换后的版本一致。
-    if isinstance(proof.version, bool) or not isinstance(proof.version, int):
+    if proof.new_global_root != trusted_new_checkpoint.root:
         return False
-    if proof.version != proof.version_after:
+    if proof.old_global_root != trusted_old_checkpoint.root:
+        return False
+    for value in (proof.version, proof.version_before, proof.version_after):
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            return False
+    if proof.version != trusted_new_checkpoint.version:
+        return False
+    if proof.version_before != trusted_old_checkpoint.version:
+        return False
+    if proof.version_after != trusted_new_checkpoint.version:
         return False
     if proof.agent_proof.key != proof.agent_tag:
         return False
@@ -230,6 +286,6 @@ def verify_state_proof(
         proof.new_global_root,
         proof.version_before,
         proof.version_after,
-        trusted_old_root,
-        trusted_root,
+        trusted_old_checkpoint,
+        trusted_new_checkpoint,
     )

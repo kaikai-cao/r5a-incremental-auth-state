@@ -17,6 +17,7 @@ from src.aggregate import (
 )
 from src.registry import AuthorizationRegistry
 from src.verifier import (
+    TrustedCheckpoint,
     verify_agent_leaf_commitment,
     verify_inner_root,
     verify_leaf_set_consistency,
@@ -26,6 +27,18 @@ from src.verifier import (
 
 def mk(gid: bytes, agent: bytes, cap: Capability, budget: int) -> Grant:
     return Grant(gid, agent, b"ISSUER", cap, budget)
+
+
+def checkpoints(reg):
+    """测试辅助：仅从本次实际转换构造与 Registry 一致的检查点。
+
+    这不意味着 Registry 自己生成的检查点天然可信；验证者必须从外部可信来源取得。
+    """
+    old_root, new_root, version_before, version_after = reg._last_transition
+    return (
+        TrustedCheckpoint(root=old_root, version=version_before),
+        TrustedCheckpoint(root=new_root, version=version_after),
+    )
 
 
 def expect_rejected(fn, reason: str):
@@ -84,8 +97,8 @@ def test_T5_tampered_proof_and_commitments_rejected():
     reg.register(mk(b"g1", b"A", Capability.EXPORT, 10))
     reg.register(mk(b"g2", b"A", Capability.EXPORT, 20))
     proof = reg.build_state_proof(b"A", b"g1")
-    old_root = reg._last_transition[0]
-    assert verify_state_proof(proof, reg.get_global_root(), old_root)
+    cps = checkpoints(reg)
+    assert verify_state_proof(proof, *cps)
 
     # 1) 篡改兄弟路径字节
     siblings = list(proof.inner_proof.siblings)
@@ -93,7 +106,7 @@ def test_T5_tampered_proof_and_commitments_rejected():
     tampered_path = replace(
         proof, inner_proof=replace(proof.inner_proof, siblings=tuple(siblings))
     )
-    assert not verify_state_proof(tampered_path, reg.get_global_root(), old_root)
+    assert not verify_state_proof(tampered_path, *cps)
 
     # 2) 篡改状态叶中的聚合摘要
     bad_leaf = bytearray(proof.agent_proof.value)
@@ -101,7 +114,7 @@ def test_T5_tampered_proof_and_commitments_rejected():
     tampered_agg = replace(
         proof, agent_proof=replace(proof.agent_proof, value=bytes(bad_leaf))
     )
-    assert not verify_state_proof(tampered_agg, reg.get_global_root(), old_root)
+    assert not verify_state_proof(tampered_agg, *cps)
 
     # 3) 篡改状态叶中的内层根
     bad_root_leaf = bytearray(proof.agent_proof.value)
@@ -114,11 +127,11 @@ def test_T5_tampered_proof_and_commitments_rejected():
 
     # 4) 篡改全局根
     tampered_global = replace(proof, global_root=b"\x42" * 32)
-    assert not verify_state_proof(tampered_global, reg.get_global_root(), old_root)
+    assert not verify_state_proof(tampered_global, *cps)
 
     # 5) 篡改转换 version
     tampered_version = replace(proof, version_after=999)
-    assert not verify_state_proof(tampered_version, reg.get_global_root(), old_root)
+    assert not verify_state_proof(tampered_version, *cps)
 
 
 def test_T6_agent_b_grant_cannot_enter_agent_a():
@@ -130,7 +143,7 @@ def test_T6_agent_b_grant_cannot_enter_agent_a():
     )
     b_proof = reg.build_state_proof(b"B", b"gB")
     forged = replace(b_proof, agent_tag=b"A")
-    assert not verify_state_proof(forged, reg.get_global_root(), reg._last_transition[0])
+    assert not verify_state_proof(forged, *checkpoints(reg))
     assert not verify_inner_root(b_proof.inner_proof, b"\x00" * 32)
 
 
@@ -255,8 +268,6 @@ def test_T15_state_proof_version_tamper_rejected():
     reg = AuthorizationRegistry()
     reg.register(mk(b"g1", b"A", Capability.EXPORT, 10))
     proof = reg.build_state_proof(b"A", b"g1")
-    old_root = reg._last_transition[0]
-    assert verify_state_proof(proof, reg.get_global_root(), old_root)
-    assert not verify_state_proof(
-        replace(proof, version=999), reg.get_global_root(), old_root
-    )
+    cps = checkpoints(reg)
+    assert verify_state_proof(proof, *cps)
+    assert not verify_state_proof(replace(proof, version=999), *cps)

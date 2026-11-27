@@ -17,6 +17,7 @@ from src.aggregate import (
 from src.registry import AuthorizationRegistry
 from src.transition import policy_holds
 from src.verifier import (
+    TrustedCheckpoint,
     verify_agent_leaf_commitment,
     verify_state_proof,
 )
@@ -24,6 +25,15 @@ from src.verifier import (
 
 def mk(gid: bytes, agent: bytes = b"A", cap=Capability.EXPORT, budget: int = 10) -> Grant:
     return Grant(gid, agent, b"ISSUER", cap, budget)
+
+
+def checkpoints(reg):
+    """测试辅助：仅用本次实际转换构造检查点；生产验证者必须从外部可信来源取得。"""
+    old_root, new_root, version_before, version_after = reg._last_transition
+    return (
+        TrustedCheckpoint(root=old_root, version=version_before),
+        TrustedCheckpoint(root=new_root, version=version_after),
+    )
 
 
 def fingerprint(reg: AuthorizationRegistry):
@@ -94,9 +104,9 @@ def test_state_proof_verification_and_tampering():
     reg.register(mk(b"g1", budget=10))
     reg.register(mk(b"g2", budget=20))
     proof = reg.build_state_proof(b"A", b"g1")
-    old_root = reg._last_transition[0]
+    cps = checkpoints(reg)
 
-    assert verify_state_proof(proof, reg.get_global_root(), old_root)
+    assert verify_state_proof(proof, *cps)
 
     tampered_path = replace(
         proof,
@@ -109,13 +119,13 @@ def test_state_proof_verification_and_tampering():
             + proof.inner_proof.siblings[1:],
         ),
     )
-    assert not verify_state_proof(tampered_path, reg.get_global_root(), old_root)
+    assert not verify_state_proof(tampered_path, *cps)
 
     tampered_root = replace(proof, global_root=b"\x11" * 32)
-    assert not verify_state_proof(tampered_root, reg.get_global_root(), old_root)
+    assert not verify_state_proof(tampered_root, *cps)
 
     tampered_version = replace(proof, version_after=99)
-    assert not verify_state_proof(tampered_version, reg.get_global_root(), old_root)
+    assert not verify_state_proof(tampered_version, *cps)
 
     leaf = bytearray(proof.agent_proof.value)
     leaf[-1] ^= 0x01

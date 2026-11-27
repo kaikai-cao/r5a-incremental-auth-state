@@ -13,6 +13,7 @@
 - 不修改 `agent-exec-binding-mvp`、`Orchard`、`Sapling` 或任何其他现有仓库。
 - 不引入 Halo2、Rust、Noir 或外部密码学库；运行时只使用 Python 标准库。
 - 不实现真实发行者签名；`issuer_id` 只是标签，不是经过验证的签名主体。
+- 不实现检查点签名、透明日志或共识；`TrustedCheckpoint` 必须由验证者从外部可信来源取得，调用方自造的检查点不构成可信事实。
 - 不把独立哈希验证描述成零知识证明。
 - 仓库当前为 **public**（2026-11-27 按用户要求公开，便于外部核查）；初始曾为 private。
 - 不删除失败案例，不伪造性能数据。
@@ -34,27 +35,31 @@ r5a-incremental-auth-state/
 ├── tests/
 │   ├── test_smt.py
 │   ├── test_registry.py
-│   ├── test_attacks.py   T1–T15
+│   ├── test_attacks.py       T1–T15
+│   ├── test_attacks_r2.py    R2：T16 / T17 / T18
 │   └── test_randomized.py
 ├── benchmarks/
-│   ├── benchmark.py
-│   ├── results.csv          原始证据（保留）
-│   └── results_r1.csv       R1：加入端到端全量重建基线
+│   ├── benchmark.py          R2：同状态全量重建基准
+│   ├── results.csv           原始证据（保留）
+│   ├── results_r1.csv        R1 证据（保留）
+│   └── results_r2.csv        R2 新证据
 ├── results/
 │   ├── test_output.txt                    原始证据（保留）
 │   ├── random_test_summary.json           原始证据（保留）
 │   ├── random_test_events.csv             原始证据（保留）
 │   ├── final_state.json                   原始证据（保留）
-│   ├── test_output_r1.txt                 R1 新证据
-│   ├── random_test_summary_r1.json         R1 新证据
-│   ├── random_test_events_r1.csv           R1 新证据
-│   └── final_state_r1.json                 R1 新证据
+│   ├── test_output_r1.txt                 R1 证据（保留）
+│   ├── random_test_summary_r1.json         R1 证据（保留）
+│   ├── random_test_events_r1.csv           R1 证据（保留）
+│   ├── final_state_r1.json                 R1 证据（保留）
+│   └── test_output_r2.txt                 R2 新证据
 ├── docs/
 │   ├── state_model.md
 │   ├── security_assumptions.md
 │   └── limitations.md
 ├── R5A_FINAL_REPORT.md        原始报告（保留）
-└── R5A_R1_FINAL_REPORT.md     R1 修正后报告
+├── R5A_R1_FINAL_REPORT.md     R1 修正后报告（保留）
+└── R5A_R2_REPORT.md           R2 修正后报告
 ```
 
 ## 冻结状态模型（摘要）
@@ -65,6 +70,7 @@ r5a-incremental-auth-state/
 - 所有整数为 uint64 语义。
 - 外层 SMT 叶承诺 `H(inner_root, aggregate)`；内层 SMT 叶承诺授权记录或撤销 tombstone。
 - **R5-A-R1**：撤销保留 tombstone，`grant_id` 在同一 Agent 内登记后永不复用；聚合只计 ACTIVE 记录。
+- **R5-A-R2**：`TrustedCheckpoint(root, version)` 同时绑定旧/新根与三个版本字段；叶集合验证拒绝重复 key 与重复路径标识。
 - 每次叶子修改最多更新 256 个父节点，禁止从全部叶子重建整棵树。
 - CAS 只检查单进程内的 `expected_version == current_version`；不声称分布式共识或线性一致性。
 
@@ -83,17 +89,21 @@ r5a-incremental-auth-state/
 | 性能记录 | N = 16 / 64 / 256 / 1024 完整 |
 | 独立验证器 | 篡改输入能被拒绝 |
 
+R5-A-R2 附加门槛：重复叶证明被拒；三个版本字段绑定可信检查点；REGISTER/REVOKE 后同状态全量重建根完全相等；两个 issuer 记录进入同一 Agent 聚合。
+
 ## 当前提交状态
 
 - `c6e0622`：仅实验框架。
 - `66851de`：原始实现与证据（保留，不覆盖）。
 - `9e56d84`：原始最终报告。
-- R1 修正提交见 `R5A_R1_FINAL_REPORT.md`；原始报告与原始证据文件均保留用于对照。
+- `0b52fc1` / `3b54b68`：R1 修正代码与报告（保留，不覆盖）。
+- R2 在独立分支 `r5a-r2-hardening` 上执行，不合并 `main`；提交号见 `R5A_R2_REPORT.md`。
+- 所有原始 / R1 / R2 证据文件并存，互不覆盖。
 
 ## 运行方式
 
 ```bash
-python -m pytest tests/ -v > results/test_output_r1.txt 2>&1
+python -m pytest tests/ -v > results/test_output_r2.txt 2>&1
 python tests/test_randomized.py          # 写入 *_r1.*，不覆盖原始证据
-python benchmarks/benchmark.py           # 写入 benchmarks/results_r1.csv
+python benchmarks/benchmark.py           # 写入 benchmarks/results_r2.csv
 ```
