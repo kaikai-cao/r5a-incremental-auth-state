@@ -1,0 +1,7 @@
+# R5-A runtime dependencies
+# 运行时只使用 Python 标准库（hashlib / dataclasses / enum / random / csv / json /
+# statistics / tracemalloc / time / argparse / pathlib）。
+# 无外部密码学库、无 Halo2、无 Rust、无 Noir。
+
+# 开发/测试依赖（仅用于运行 pytest，不参与原型运行逻辑）
+pytest==9.2.0

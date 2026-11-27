@@ -1,0 +1,13 @@
+R5-A 实验环境记录（初始化时采集，后续若有变更需追加新记录，不得覆盖）
+
+python=3.13.14 (main, Jun 11 2026, 04:04:46) [MSC v.1944 64 bit (AMD64)]
+implementation=CPython
+platform=Windows-11-10.0.26320-SP0
+machine=AMD64
+pytest=9.2.0
+hash=hashlib.sha256 (Python 标准库)
+external_crypto_libraries=none
+Rust/Halo2/Noir=not used
+
+虚拟环境：在提交实现前创建独立 .venv；.venv/ 不纳入 Git。
+所有运行命令与 Git commit 在 R5A_FINAL_REPORT.md 与 results/ 中记录。
