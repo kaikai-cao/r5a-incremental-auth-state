@@ -15,8 +15,10 @@ from .aggregate import (
     Rejected,
     deserialize_agent_leaf,
     deserialize_grant,
+    is_tombstone,
     serialize_agent_leaf,
     serialize_grant,
+    serialize_tombstone,
     validate_grant,
 )
 from .smt import EMPTY_HASHES, SMT, SMTProof
@@ -85,7 +87,11 @@ class AuthorizationRegistry:
         inner = self.inner_smts.get(agent_tag)
         if inner is None:
             return tuple()
-        return tuple(deserialize_grant(value) for value in inner.leaves.values())
+        return tuple(
+            deserialize_grant(value)
+            for value in inner.leaves.values()
+            if not is_tombstone(value)
+        )
 
     def prove_agent(self, agent_tag: bytes) -> SMTProof:
         return self.global_smt.prove(agent_tag)
@@ -95,6 +101,17 @@ class AuthorizationRegistry:
         if inner is None:
             raise Rejected("AGENT_NOT_FOUND", "agent has no inner tree")
         return inner.prove(grant_id)
+
+    def all_leaf_proofs(self, agent_tag: bytes) -> tuple[SMTProof, ...]:
+        """枚举内层全部叶证明（含墓碑），仅用于全量一致性诊断，非 ZK 证明。
+
+        注意：该方法本身是全量扫描；任何调用它的验证都不具备「不扫描全部授权」
+        的性质，也不能证明没有遗漏的叶子。
+        """
+        inner = self.inner_smts.get(agent_tag)
+        if inner is None:
+            return tuple()
+        return tuple(inner.prove_by_path(path) for path in inner.leaves)
 
     def build_state_proof(self, agent_tag: bytes, grant_id: bytes) -> StateProof:
         agent_proof = self.prove_agent(agent_tag)
@@ -180,7 +197,13 @@ class AuthorizationRegistry:
         inner = self.inner_smts.get(agent)
         if inner is None:
             inner = SMT()
-        if inner.contains(grant.grant_id):
+        existing = inner.get(grant.grant_id)
+        if existing is not None:
+            if is_tombstone(existing):
+                raise Rejected(
+                    "GRANT_ID_REUSED",
+                    "grant_id was revoked and must never be reused in this agent",
+                )
             raise Rejected("DUPLICATE_GRANT_ID", "grant_id already active in agent")
 
         current_agg = self.aggregates.get(agent, ZERO_AGGREGATE)
@@ -209,7 +232,7 @@ class AuthorizationRegistry:
         if inner is None:
             raise Rejected("GRANT_NOT_FOUND", "agent has no active grants")
         grant_bytes = inner.get(grant_id)
-        if grant_bytes is None:
+        if grant_bytes is None or is_tombstone(grant_bytes):
             raise Rejected("GRANT_NOT_FOUND", "grant_id not active in agent")
 
         # 能力/预算必须从 Registry 存储记录读取，绝不接收调用方提供的字段。
@@ -220,7 +243,11 @@ class AuthorizationRegistry:
         current_agg = self.aggregates[agent_tag]
         new_agg = apply_revoke(current_agg, grant.capability, grant.budget)
 
-        inner_preview = inner.preview_set(grant_id, None)
+        # R5-A-R1：保留不可复用墓碑，而不是删除叶子；聚合只计 ACTIVE 记录。
+        tombstone = serialize_tombstone(
+            grant.grant_id, grant.agent_tag, grant.capability, grant.budget
+        )
+        inner_preview = inner.preview_set(grant_id, tombstone)
         new_agent_leaf = serialize_agent_leaf(inner_preview.new_root, new_agg)
         outer_preview = self.global_smt.preview_set(agent_tag, new_agent_leaf)
 
@@ -236,7 +263,7 @@ class AuthorizationRegistry:
         if inner is None:
             raise Rejected("GRANT_NOT_FOUND", "agent has no active grants")
         grant_bytes = inner.get(grant_id)
-        if grant_bytes is None:
+        if grant_bytes is None or is_tombstone(grant_bytes):
             raise Rejected("GRANT_NOT_FOUND", "grant_id not active")
         grant = deserialize_grant(grant_bytes)
         if grant.agent_tag != agent_tag:

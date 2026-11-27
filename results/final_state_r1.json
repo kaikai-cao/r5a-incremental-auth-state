@@ -1,0 +1,55 @@
+{
+  "version": 6235,
+  "global_root": "8dbfbdefc7a87a20c207065283ec3f02185ee795994a3e238b203357eb1d55d6",
+  "agents": {
+    "A": {
+      "inner_root": "68f05f6fd93d806fef9b23eeb38fd9ef1535414d358132dbc98954356c3e4d75",
+      "aggregate": {
+        "export_count": 4,
+        "delete_count": 0,
+        "budget_sum": 17,
+        "active_grants": 4
+      },
+      "grant_ids": [
+        "67303039393833",
+        "67303039393834",
+        "67303039393835",
+        "67303039393932"
+      ]
+    },
+    "B": {
+      "inner_root": "d88f32f23fcbc3dafcd6271d1a394566a8b16deae46cd3b789a7212f54be3e20",
+      "aggregate": {
+        "export_count": 0,
+        "delete_count": 5,
+        "budget_sum": 15,
+        "active_grants": 5
+      },
+      "grant_ids": [
+        "67303039393232",
+        "67303039393631",
+        "67303039393830",
+        "67303039393831",
+        "67303039393938"
+      ]
+    },
+    "C": {
+      "inner_root": "47d4ea50f5263459a6615d7b5e8616195e183d4167e2ba67511c5ba1059ce63a",
+      "aggregate": {
+        "export_count": 6,
+        "delete_count": 0,
+        "budget_sum": 57,
+        "active_grants": 6
+      },
+      "grant_ids": [
+        "67303039383830",
+        "67303039393333",
+        "67303039393337",
+        "67303039393436",
+        "67303039393538",
+        "67303039393838"
+      ]
+    }
+  },
+  "note": "Synthetic experiment state. No real issuer signatures."
+}

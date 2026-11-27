@@ -16,6 +16,9 @@ from .aggregate import (
     Rejected,
     deserialize_agent_leaf,
     deserialize_grant,
+    deserialize_tombstone,
+    is_tombstone,
+    recompute_aggregate,
 )
 from .smt import (
     DEPTH,
@@ -97,6 +100,45 @@ def verify_agent_leaf_commitment(
     return decoded_root == inner_root and decoded_agg == aggregate
 
 
+def verify_leaf_set_consistency(
+    leaf_proofs,
+    inner_root: bytes,
+    committed_aggregate: Aggregate,
+) -> bool:
+    """验证「所给叶集合」的 ACTIVE 聚合是否等于承诺摘要。
+
+    边界（重要）：
+      - 需要调用方枚举全部叶证明，因此它是**全量扫描**诊断，不是不扫描的验证；
+      - 它只能检查所给叶与摘要一致，**不能证明没有遗漏的叶**；
+      - 它不是 ZK 证明，也不证明状态转换正确性。
+    """
+    active_grants = []
+    for proof in leaf_proofs:
+        if not verify_path(proof.key, proof.value, proof.siblings, inner_root):
+            return False
+        if proof.value is None:
+            return False
+        if is_tombstone(proof.value):
+            try:
+                revoked = deserialize_tombstone(proof.value)
+            except (Rejected, ValueError, TypeError):
+                return False
+            if revoked.grant_id != proof.key:
+                return False
+            continue
+        try:
+            grant = deserialize_grant(proof.value)
+        except (Rejected, ValueError, TypeError):
+            return False
+        if grant.grant_id != proof.key:
+            return False
+        active_grants.append(grant)
+    try:
+        return recompute_aggregate(active_grants) == committed_aggregate
+    except Rejected:
+        return False
+
+
 def verify_transition(
     old_root: bytes,
     new_root: bytes,
@@ -142,6 +184,11 @@ def verify_state_proof(
         return False
     if proof.new_global_root != trusted_root:
         return False
+    # R5-A-R1 / T15：version 字段必须存在且与转换后的版本一致。
+    if isinstance(proof.version, bool) or not isinstance(proof.version, int):
+        return False
+    if proof.version != proof.version_after:
+        return False
     if proof.agent_proof.key != proof.agent_tag:
         return False
     if not verify_outer_root(proof.agent_proof, proof.global_root):
@@ -161,12 +208,23 @@ def verify_state_proof(
     if not verify_inner_root(proof.inner_proof, inner_root):
         return False
     if proof.inner_proof.value is not None:
-        try:
-            grant = deserialize_grant(proof.inner_proof.value)
-        except (Rejected, ValueError, TypeError):
-            return False
-        if grant.grant_id != proof.grant_id or grant.agent_tag != proof.agent_tag:
-            return False
+        if is_tombstone(proof.inner_proof.value):
+            try:
+                revoked = deserialize_tombstone(proof.inner_proof.value)
+            except (Rejected, ValueError, TypeError):
+                return False
+            if (
+                revoked.grant_id != proof.grant_id
+                or revoked.agent_tag != proof.agent_tag
+            ):
+                return False
+        else:
+            try:
+                grant = deserialize_grant(proof.inner_proof.value)
+            except (Rejected, ValueError, TypeError):
+                return False
+            if grant.grant_id != proof.grant_id or grant.agent_tag != proof.agent_tag:
+                return False
     return verify_transition(
         proof.old_global_root,
         proof.new_global_root,

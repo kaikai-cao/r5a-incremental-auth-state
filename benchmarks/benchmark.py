@@ -19,15 +19,20 @@ ROOT = Path(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from src.aggregate import Capability, Grant, recompute_aggregate  # noqa: E402
+from src.aggregate import (  # noqa: E402
+    Capability,
+    Grant,
+    recompute_aggregate,
+    serialize_agent_leaf,
+    serialize_grant,
+)
 from src.registry import AuthorizationRegistry  # noqa: E402
-from src.smt import get_hash_count, reset_hash_count  # noqa: E402
+from src.smt import SMT, get_hash_count, reset_hash_count  # noqa: E402
 
 SCALES = (16, 64, 256, 1024)
 WARMUP = 5
 RUNS = 30
 BENCH_AGENT = b"A"
-TEMP_ID = b"benchmark-temp-grant"
 
 FIELDS = [
     "N",
@@ -37,6 +42,7 @@ FIELDS = [
     "register_hashes",
     "revoke_hashes",
     "full_recompute_seconds",
+    "full_rebuild_seconds",
     "peak_memory_mb",
     "proof_path_inner",
     "proof_path_outer",
@@ -68,8 +74,35 @@ def build_initial_state(n: int) -> AuthorizationRegistry:
     return reg
 
 
-def temp_grant() -> Grant:
-    return Grant(TEMP_ID, BENCH_AGENT, b"ISSUER", Capability.EXPORT, 0)
+def temp_id(index: int) -> bytes:
+    """R5-A-R1：每个 UPDATE 使用唯一 ID，避免 tombstone 导致基准无法重复。"""
+    return f"benchmark-temp-{index:08d}".encode()
+
+
+def temp_grant(index: int) -> Grant:
+    return Grant(temp_id(index), BENCH_AGENT, b"ISSUER", Capability.EXPORT, 0)
+
+
+def rebuild_from_scratch(n: int) -> tuple[float, bytes]:
+    """端到端全量重建基线：聚合摘要 + 内层 SMT + 外层 SMT + 全局根。
+
+    与增量路径工作量可比：都产生完整的状态承诺。仍不计时 seed 数据构造。
+    """
+    grants = [
+        Grant(
+            f"seed-{i:06d}".encode(), BENCH_AGENT, b"ISSUER", Capability.EXPORT, 0
+        )
+        for i in range(n)
+    ]
+    t0 = time.perf_counter()
+    aggregate = recompute_aggregate(grants)
+    inner = SMT()
+    for grant in grants:
+        inner.set(grant.grant_id, serialize_grant(grant))
+    outer = SMT()
+    outer.set(BENCH_AGENT, serialize_agent_leaf(inner.root, aggregate))
+    t1 = time.perf_counter()
+    return t1 - t0, outer.root
 
 
 def measure_memory(n: int) -> float:
@@ -77,9 +110,9 @@ def measure_memory(n: int) -> float:
     tracemalloc.start()
     try:
         reg = build_initial_state(n)
-        for _ in range(5):
-            reg.register(temp_grant())
-            reg.revoke(BENCH_AGENT, TEMP_ID)
+        for i in range(5):
+            reg.register(temp_grant(2000 + i))
+            reg.revoke(BENCH_AGENT, temp_id(2000 + i))
         _current, peak = tracemalloc.get_traced_memory()
     finally:
         tracemalloc.stop()
@@ -89,9 +122,9 @@ def measure_memory(n: int) -> float:
 def run_scale(n: int) -> tuple[list[dict], dict]:
     reg = build_initial_state(n)
 
-    for _ in range(WARMUP):
-        reg.register(temp_grant())
-        reg.revoke(BENCH_AGENT, TEMP_ID)
+    for i in range(WARMUP):
+        reg.register(temp_grant(1000 + i))
+        reg.revoke(BENCH_AGENT, temp_id(1000 + i))
 
     samples: list[dict] = []
     reg_times: list[float] = []
@@ -99,18 +132,20 @@ def run_scale(n: int) -> tuple[list[dict], dict]:
     reg_hashes: list[int] = []
     rev_hashes: list[int] = []
     oracle_times: list[float] = []
+    rebuild_times: list[float] = []
 
     for run in range(1, RUNS + 1):
+        gid = temp_id(run)
         reset_hash_count()
         t0 = time.perf_counter()
-        reg.register(temp_grant(), expected_version=reg.get_version())
+        reg.register(temp_grant(run), expected_version=reg.get_version())
         t1 = time.perf_counter()
         reg_dt = t1 - t0
         reg_h = get_hash_count()
 
         reset_hash_count()
         t2 = time.perf_counter()
-        reg.revoke(BENCH_AGENT, TEMP_ID, expected_version=reg.get_version())
+        reg.revoke(BENCH_AGENT, gid, expected_version=reg.get_version())
         t3 = time.perf_counter()
         rev_dt = t3 - t2
         rev_h = get_hash_count()
@@ -120,11 +155,17 @@ def run_scale(n: int) -> tuple[list[dict], dict]:
         t5 = time.perf_counter()
         oracle_dt = t5 - t4
 
+        rebuild_dt, rebuild_root = rebuild_from_scratch(n)
+        if run == 1:
+            expected_root = build_initial_state(n).get_global_root()
+            assert rebuild_root == expected_root, "full rebuild root mismatch"
+
         reg_times.append(reg_dt)
         rev_times.append(rev_dt)
         reg_hashes.append(reg_h)
         rev_hashes.append(rev_h)
         oracle_times.append(oracle_dt)
+        rebuild_times.append(rebuild_dt)
         samples.append(
             {
                 "N": n,
@@ -134,6 +175,7 @@ def run_scale(n: int) -> tuple[list[dict], dict]:
                 "register_hashes": reg_h,
                 "revoke_hashes": rev_h,
                 "full_recompute_seconds": f"{oracle_dt:.9f}",
+                "full_rebuild_seconds": f"{rebuild_dt:.9f}",
                 "peak_memory_mb": "",
                 "proof_path_inner": "",
                 "proof_path_outer": "",
@@ -147,7 +189,7 @@ def run_scale(n: int) -> tuple[list[dict], dict]:
     assert state.aggregate == recompute_aggregate(reg.active_grants(BENCH_AGENT))
 
     peak_mb = measure_memory(n)
-    inner_len = len(reg.prove_grant(BENCH_AGENT, f"seed-000000".encode()).siblings)
+    inner_len = len(reg.prove_grant(BENCH_AGENT, b"seed-000000").siblings)
     outer_len = len(reg.prove_agent(BENCH_AGENT).siblings)
     root = reg.get_global_root().hex()
 
@@ -170,6 +212,7 @@ def run_scale(n: int) -> tuple[list[dict], dict]:
                 "register_hashes": pick(reg_hashes),
                 "revoke_hashes": pick(rev_hashes),
                 "full_recompute_seconds": f"{pick(oracle_times):.9f}",
+                "full_rebuild_seconds": f"{pick(rebuild_times):.9f}",
                 **common,
             }
         )
@@ -184,6 +227,8 @@ def run_scale(n: int) -> tuple[list[dict], dict]:
         "median_revoke_hashes": statistics.median(rev_hashes),
         "median_full_recompute_s": statistics.median(oracle_times),
         "p95_full_recompute_s": p95(oracle_times),
+        "median_full_rebuild_s": statistics.median(rebuild_times),
+        "p95_full_rebuild_s": p95(rebuild_times),
         "peak_memory_mb": peak_mb,
         "proof_path_inner": inner_len,
         "proof_path_outer": outer_len,
@@ -203,9 +248,11 @@ def main() -> None:
               f"p95={summary['p95_register_s']*1e6:9.2f} us | "
               f"revoke median={summary['median_revoke_s']*1e6:9.2f} us | "
               f"oracle median={summary['median_full_recompute_s']*1e6:9.2f} us | "
+              f"full rebuild median={summary['median_full_rebuild_s']*1e6:9.2f} us | "
               f"peak={summary['peak_memory_mb']:.2f} MB | root={summary['global_root'][:16]}")
 
-    out = ROOT / "benchmarks" / "results.csv"
+    # R5-A-R1：写入新文件，保留原始 benchmarks/results.csv 不覆盖。
+    out = ROOT / "benchmarks" / "results_r1.csv"
     out.parent.mkdir(parents=True, exist_ok=True)
     with out.open("w", newline="", encoding="utf-8") as fh:
         writer = csv.DictWriter(fh, fieldnames=FIELDS)

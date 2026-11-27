@@ -23,6 +23,13 @@
 - SMT membership / non-membership 路径；
 - 内层根与外层根；
 - Agent 状态叶中的聚合摘要承诺；
-- 旧根、新根与 version 的一致性。
+- 旧根、新根与 version 的一致性（R5-A-R1 起也检查 `StateProof.version`）；
+- tombstone 与 ACTIVE 记录的区分。
 
 它 **不是** 电路证明，也 **不是** 零知识证明。任何验证成功只说明「给定根下，这些字节与路径自洽」。
+
+R5-A-R1 明确边界：
+
+- `verify_leaf_set_consistency()` 可检查「所给叶集合的 ACTIVE 聚合 == 承诺摘要」，但需要枚举全部叶，
+  **不证明没有遗漏的叶**；不扫描全部叶的一致性验证 **未实现**。
+- `verify_transition()` 是外部可信检查点一致性检查，**不证明** `S_{t+1} = Transition(S_t, e_t)`。

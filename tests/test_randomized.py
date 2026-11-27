@@ -67,6 +67,7 @@ def run_random_test(
     attempts: int,
     seed: int = SEED,
     emit_files: bool = False,
+    suffix: str = "",
 ) -> tuple[dict, list[dict]]:
     rng = random.Random(seed)
     reg = AuthorizationRegistry()
@@ -208,11 +209,15 @@ def run_random_test(
 
     if emit_files:
         RESULTS.mkdir(parents=True, exist_ok=True)
-        with (RESULTS / "random_test_events.csv").open("w", newline="", encoding="utf-8") as fh:
+        with (RESULTS / f"random_test_events{suffix}.csv").open(
+            "w", newline="", encoding="utf-8"
+        ) as fh:
             writer = csv.DictWriter(fh, fieldnames=EVENT_FIELDS)
             writer.writeheader()
             writer.writerows(events)
-        with (RESULTS / "random_test_summary.json").open("w", encoding="utf-8") as fh:
+        with (RESULTS / f"random_test_summary{suffix}.json").open(
+            "w", encoding="utf-8"
+        ) as fh:
             json.dump(summary, fh, indent=2, ensure_ascii=False)
             fh.write("\n")
         final_state = {
@@ -234,7 +239,7 @@ def run_random_test(
             },
             "note": "Synthetic experiment state. No real issuer signatures.",
         }
-        with (RESULTS / "final_state.json").open("w", encoding="utf-8") as fh:
+        with (RESULTS / f"final_state{suffix}.json").open("w", encoding="utf-8") as fh:
             json.dump(final_state, fh, indent=2, ensure_ascii=False)
             fh.write("\n")
 
@@ -267,6 +272,26 @@ def test_randomized_evidence_file():
         assert sum(1 for _ in csv.DictReader(fh)) == 10000
 
 
+def test_randomized_r1_evidence_file():
+    """R5-A-R1：tombstone 修正后的 10,000 次证据，独立于原始证据文件。"""
+    summary_path = RESULTS / "random_test_summary_r1.json"
+    assert summary_path.exists(), "请先运行 python tests/test_randomized.py 生成 R1 证据"
+    summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    assert summary["seed"] == SEED
+    assert summary["attempts"] == 10000
+    assert summary["executed_operations"] == 10000
+    assert summary["successful_operations"] + summary["rejected_operations"] == 10000
+    assert summary["first_inconsistent_op"] is None
+    assert summary["all_oracle_checks_passed"]
+    assert summary["all_policy_checks_passed"]
+    assert summary["all_rejected_ops_state_unchanged"]
+    with (RESULTS / "random_test_events_r1.csv").open(encoding="utf-8") as fh:
+        assert sum(1 for _ in csv.DictReader(fh)) == 10000
+
+
 if __name__ == "__main__":
-    result, _ = run_random_test(attempts=10000, seed=SEED, emit_files=True)
+    # 默认写入 _r1 文件，避免覆盖 R5-A 原始证据。
+    result, _ = run_random_test(
+        attempts=10000, seed=SEED, emit_files=True, suffix="_r1"
+    )
     print(json.dumps(result, indent=2, ensure_ascii=False))

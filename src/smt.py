@@ -69,6 +69,7 @@ class Preview:
     changes: tuple[tuple[tuple[int, int], bytes | None], ...]
     path: int
     value: bytes | None
+    key: bytes
 
 
 class SMT:
@@ -76,6 +77,7 @@ class SMT:
 
     def __init__(self) -> None:
         self.leaves: dict[int, bytes] = {}
+        self.keys: dict[int, bytes] = {}
         self.nodes: dict[tuple[int, int], bytes] = {}
         self._root = EMPTY_HASHES[0]
 
@@ -119,14 +121,16 @@ class SMT:
             else:
                 changes.append(((depth, index), node))
             current = node
-        return Preview(current, tuple(changes), path, value)
+        return Preview(current, tuple(changes), path, value, key)
 
     def apply(self, preview: Preview) -> None:
         """提交 preview 的变更；无哈希计算，失败路径不会调用。"""
         if preview.value is None:
             self.leaves.pop(preview.path, None)
+            self.keys.pop(preview.path, None)
         else:
             self.leaves[preview.path] = preview.value
+            self.keys[preview.path] = preview.key
         for (depth, index), node_hash in preview.changes:
             if node_hash is None:
                 self.nodes.pop((depth, index), None)
@@ -142,6 +146,21 @@ class SMT:
 
     def contains(self, key: bytes) -> bool:
         return self.get(key) is not None
+
+    def prove_by_path(self, path: int) -> SMTProof:
+        """按已知叶路径生成证明（用于枚举全部叶，避免重新哈希键）。"""
+        siblings: list[bytes] = []
+        for depth in range(DEPTH):
+            index = path >> (DEPTH - depth)
+            goes_right = (path >> (DEPTH - 1 - depth)) & 1
+            sibling_index = (index << 1) if goes_right else ((index << 1) | 1)
+            siblings.append(self._get_node_hash(depth + 1, sibling_index))
+        return SMTProof(
+            key=self.keys.get(path, b""),
+            value=self.leaves.get(path),
+            siblings=tuple(siblings),
+            root=self.root,
+        )
 
     def prove(self, key: bytes) -> SMTProof:
         """生成 256 个兄弟哈希的路径证明；value=None 表示非成员证明。"""

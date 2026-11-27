@@ -19,6 +19,7 @@ from src.registry import AuthorizationRegistry
 from src.verifier import (
     verify_agent_leaf_commitment,
     verify_inner_root,
+    verify_leaf_set_consistency,
     verify_state_proof,
 )
 
@@ -203,3 +204,59 @@ def test_T12_forged_budget_cannot_affect_revoke():
         reg.active_grants(b"A")
     )
     assert reg.get_agent_state(b"A").aggregate.budget_sum == 0
+
+
+def test_T13_revoked_grant_id_cannot_be_reused():
+    """撤销后叶子保留为 tombstone；原 grant_id 在 ACTIVE 与 REVOKED 中都不可复用。"""
+    reg = AuthorizationRegistry()
+    original = mk(b"g1", b"A", Capability.EXPORT, 10)
+    reg.register(original)
+    reg.revoke(b"A", b"g1", expected_version=1)
+    before = reg.state_snapshot()
+
+    expect_rejected(lambda: reg.register(original, expected_version=2), "GRANT_ID_REUSED")
+    expect_rejected(
+        lambda: reg.register(
+            mk(b"g1", b"A", Capability.DELETE, 1), expected_version=2
+        ),
+        "GRANT_ID_REUSED",
+    )
+    assert reg.state_snapshot() == before
+    assert reg.active_grants(b"A") == ()
+    assert reg.get_agent_state(b"A").aggregate == Aggregate(0, 0, 0)
+
+
+def test_T14_aggregate_vs_leaf_set_consistency():
+    """摘要与所给授权叶不一致时必须拒绝。
+
+    边界：此验证需要枚举全部叶证明，属于全量扫描诊断；它不证明「没有遗漏的叶」，
+    也不证明状态转换正确性。不扫描全部叶的聚合一致性验证 **未实现**。
+    """
+    reg = AuthorizationRegistry()
+    reg.register(mk(b"g1", b"A", Capability.EXPORT, 10))
+    reg.register(mk(b"g2", b"A", Capability.EXPORT, 20))
+    state = reg.get_agent_state(b"A")
+    proofs = reg.all_leaf_proofs(b"A")
+
+    assert verify_leaf_set_consistency(proofs, state.inner_root, state.aggregate)
+    assert not verify_leaf_set_consistency(
+        proofs, state.inner_root, Aggregate(1, 0, 10)
+    )
+    assert not verify_leaf_set_consistency(
+        proofs[:1], state.inner_root, state.aggregate
+    )
+    bad_proof = replace(proofs[0], value=b"tampered-leaf-value")
+    assert not verify_leaf_set_consistency(
+        [bad_proof, *proofs[1:]], state.inner_root, state.aggregate
+    )
+
+
+def test_T15_state_proof_version_tamper_rejected():
+    reg = AuthorizationRegistry()
+    reg.register(mk(b"g1", b"A", Capability.EXPORT, 10))
+    proof = reg.build_state_proof(b"A", b"g1")
+    old_root = reg._last_transition[0]
+    assert verify_state_proof(proof, reg.get_global_root(), old_root)
+    assert not verify_state_proof(
+        replace(proof, version=999), reg.get_global_root(), old_root
+    )

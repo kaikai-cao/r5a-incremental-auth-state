@@ -19,6 +19,7 @@ BUDGET_CAP = 100
 GRANT_PREFIX = b"R5A-GRANT-v1"
 AGG_PREFIX = b"R5A-AGG-v1"
 AGENT_LEAF_PREFIX = b"R5A-AGENTLEAF-v1"
+TOMBSTONE_PREFIX = b"R5A-TOMBSTONE-v1"
 
 
 class Capability(Enum):
@@ -142,6 +143,60 @@ def deserialize_grant(data: bytes) -> Grant:
     except ValueError as exc:
         raise Rejected("INVALID_PROOF", "unknown capability value") from exc
     return Grant(grant_id, agent_tag, issuer_id, capability, budget)
+
+
+def serialize_tombstone(
+    grant_id: bytes, agent_tag: bytes, capability: Capability, budget: int
+) -> bytes:
+    """撤销后的不可复用墓碑；它占据 grant_id 叶位但不计入 ACTIVE 聚合。"""
+    return (
+        TOMBSTONE_PREFIX
+        + _lp(grant_id)
+        + _lp(agent_tag)
+        + bytes([capability.value])
+        + budget.to_bytes(8, "big")
+    )
+
+
+def is_tombstone(data: bytes | None) -> bool:
+    return isinstance(data, bytes) and data.startswith(TOMBSTONE_PREFIX)
+
+
+def deserialize_tombstone(data: bytes) -> Grant:
+    """反序列化墓碑为 Grant 形状的记录，供审计/验证器核对键一致性。"""
+    if not is_tombstone(data):
+        raise Rejected("INVALID_PROOF", "not a tombstone")
+    pos = len(TOMBSTONE_PREFIX)
+
+    def read_lp() -> bytes:
+        nonlocal pos
+        if pos + 4 > len(data):
+            raise Rejected("INVALID_PROOF", "truncated tombstone length")
+        size = int.from_bytes(data[pos : pos + 4], "big")
+        pos += 4
+        if pos + size > len(data):
+            raise Rejected("INVALID_PROOF", "truncated tombstone field")
+        out = data[pos : pos + size]
+        pos += size
+        return out
+
+    grant_id = read_lp()
+    agent_tag = read_lp()
+    if pos + 1 > len(data):
+        raise Rejected("INVALID_PROOF", "truncated tombstone capability")
+    cap_value = data[pos]
+    pos += 1
+    if pos + 8 > len(data):
+        raise Rejected("INVALID_PROOF", "truncated tombstone budget")
+    budget = int.from_bytes(data[pos : pos + 8], "big")
+    pos += 8
+    if pos != len(data):
+        raise Rejected("INVALID_PROOF", "trailing tombstone bytes")
+    try:
+        capability = Capability(cap_value)
+    except ValueError as exc:
+        raise Rejected("INVALID_PROOF", "unknown tombstone capability") from exc
+    return Grant(grant_id, agent_tag, b"REVOKED", capability, budget)
 
 
 def serialize_aggregate(agg: Aggregate) -> bytes:

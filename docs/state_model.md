@@ -99,6 +99,17 @@ DELETE: Q' = (n_E,     n_D - 1, B - b)
 - 撤销失败不能修改任何状态；
 - 不允许计数器下溢。
 
+### R5-A-R1 修正：撤销 tombstone
+
+撤销 **不删除** 内层叶，而是写入带 `R5A-TOMBSTONE-v1` 前缀的不可复用记录（保留 grant_id、
+agent_tag、原 capability 与 budget）。后果：
+
+- `grant_id` 在同一 Agent 内一旦登记（无论 ACTIVE 还是 REVOKED）永不复用；`register` 遇到
+  tombstone 返回 `GRANT_ID_REUSED`，遇到 ACTIVE 重复返回 `DUPLICATE_GRANT_ID`。
+- `Aggregate` 只统计 ACTIVE 叶，tombstone 不影响 `n_E / n_D / B`。
+- `revoke` / `gateway_authorize` 遇到 tombstone 一律按 `GRANT_NOT_FOUND` 拒绝。
+- tombstone 仍被内层根承诺，独立验证器能区分 tombstone 与 ACTIVE 记录。
+
 ## 5. CAS 与版本
 
 若 `expected_version != current_version`，必须拒绝更新。
