@@ -1,0 +1,41 @@
+{
+  "seed": 20261127,
+  "attempts": 10000,
+  "executed_operations": 10000,
+  "successful_operations": 6235,
+  "rejected_operations": 3765,
+  "rejection_reasons": {
+    "GRANT_NOT_FOUND": 392,
+    "POLICY_VIOLATION": 2583,
+    "VERSION_MISMATCH": 790
+  },
+  "first_inconsistent_op": null,
+  "final_version": 6235,
+  "final_global_root": "6ddea9f60f24f0b7254db903aa087c64933aff3fa1d434f17de4ea3e3bf8188d",
+  "final_aggregates": {
+    "A": {
+      "export_count": 4,
+      "delete_count": 0,
+      "budget_sum": 17,
+      "active_grants": 4
+    },
+    "B": {
+      "export_count": 0,
+      "delete_count": 5,
+      "budget_sum": 15,
+      "active_grants": 5
+    },
+    "C": {
+      "export_count": 6,
+      "delete_count": 0,
+      "budget_sum": 57,
+      "active_grants": 6
+    }
+  },
+  "incremental_path": "src.transition.apply_register / apply_revoke",
+  "oracle_path": "src.aggregate.recompute_aggregate (independent full scan)",
+  "all_oracle_checks_passed": true,
+  "all_policy_checks_passed": true,
+  "all_rejected_ops_state_unchanged": true,
+  "stopped_early_due_to_inconsistency": false
+}

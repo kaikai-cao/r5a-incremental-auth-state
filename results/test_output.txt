@@ -1,0 +1,35 @@
+============================= test session starts =============================
+platform win32 -- Python 3.13.14, pytest-9.2.0, pluggy-1.7.0 -- D:\WorkBuddyData\.workbuddy\binaries\python\versions\3.13.12\python.exe
+cachedir: .pytest_cache
+rootdir: D:\Research\r5a-incremental-auth-state
+collecting ... collected 27 items
+
+tests/test_attacks.py::test_T1_mixed_capability_rejected PASSED          [  3%]
+tests/test_attacks.py::test_T2_revoke_one_of_two_exports_keeps_count PASSED [  7%]
+tests/test_attacks.py::test_T3_revoke_nonexistent_rejected PASSED        [ 11%]
+tests/test_attacks.py::test_T4_stale_version_rejected_twice PASSED       [ 14%]
+tests/test_attacks.py::test_T5_tampered_proof_and_commitments_rejected PASSED [ 18%]
+tests/test_attacks.py::test_T6_agent_b_grant_cannot_enter_agent_a PASSED [ 22%]
+tests/test_attacks.py::test_T7_unregistered_grant_gateway_rejected PASSED [ 25%]
+tests/test_attacks.py::test_T8_budget_cap_rejected PASSED                [ 29%]
+tests/test_attacks.py::test_T9_nonempty_genesis_rejected PASSED          [ 33%]
+tests/test_attacks.py::test_T10_duplicate_grant_id_rejected PASSED       [ 37%]
+tests/test_attacks.py::test_T11_double_revoke_rejected PASSED            [ 40%]
+tests/test_attacks.py::test_T12_forged_budget_cannot_affect_revoke PASSED [ 44%]
+tests/test_randomized.py::test_randomized_small_run PASSED               [ 48%]
+tests/test_randomized.py::test_randomized_evidence_file PASSED           [ 51%]
+tests/test_registry.py::test_register_matches_oracle_after_each_step PASSED [ 55%]
+tests/test_registry.py::test_cas_rejects_stale_version PASSED            [ 59%]
+tests/test_registry.py::test_revoke_uses_stored_record PASSED            [ 62%]
+tests/test_registry.py::test_rejected_operations_are_atomic PASSED       [ 66%]
+tests/test_registry.py::test_nonempty_genesis_rejected PASSED            [ 70%]
+tests/test_registry.py::test_state_proof_verification_and_tampering PASSED [ 74%]
+tests/test_registry.py::test_gateway_authorize PASSED                    [ 77%]
+tests/test_smt.py::test_incremental_root_is_order_independent PASSED     [ 81%]
+tests/test_smt.py::test_membership_and_nonmembership_paths PASSED        [ 85%]
+tests/test_smt.py::test_empty_tree_nonmembership PASSED                  [ 88%]
+tests/test_smt.py::test_tampered_siblings_value_and_root_are_rejected PASSED [ 92%]
+tests/test_smt.py::test_one_update_changes_at_most_256_parent_nodes PASSED [ 96%]
+tests/test_smt.py::test_delete_returns_to_empty_root PASSED              [100%]
+
+============================= 27 passed in 1.40s ==============================
